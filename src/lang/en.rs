@@ -2,6 +2,7 @@ lazy_static::lazy_static! {
 pub static ref T: std::collections::HashMap<&'static str, &'static str> =
     [
         ("desk_tip", "Your desktop can be accessed with this ID and password."),
+        ("desk_tip_ip_only", "Your desktop can be accessed with the IP addresses below and your password."),
         ("connecting_status", "Connecting to the RustDesk network..."),
         ("not_ready_status", "Not ready. Please check your connection"),
         ("ID/Relay Server", "ID/Relay server"),
@@ -47,6 +48,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Change Local Port", "Change local port"),
         ("setup_server_tip", "For faster connection, please set up your own server"),
         ("Enter Remote ID", "Enter remote ID"),
+        ("Enter Remote Address", "Enter remote address"),
         ("Auto Login", "Auto Login (Only valid if you set \"Lock after session end\")"),
         ("Change Path", "Change path"),
         ("Create Folder", "Create folder"),
@@ -112,6 +114,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Unlock Security Settings", "Unlock security settings"),
         ("Unlock Network Settings", "Unlock network settings"),
         ("Direct IP Access", "Direct IP access"),
+        ("Direct IP access is disabled", "Direct IP access is disabled"),
         ("Audio Input Device", "Audio input device"),
         ("Use IP Whitelisting", "Use IP whitelisting"),
         ("Pin Toolbar", "Pin toolbar"),
@@ -200,6 +203,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("display_is_plugged_out_msg", "The display is plugged out, switch to the first display."),
         ("selinux_tip", "SELinux is enabled on your device, which may prevent RustDesk from running properly as controlled side."),
         ("id_input_tip", "You can input an ID, a direct IP, or a domain with a port (<domain>:<port>).\nIf you want to access a device on another server, please append the server address (<id>@<server_address>?key=<key_value>), for example,\n9123456234@192.168.16.1:21117?key=5Qbwsde3unUcJBtrx9ZkvUmwFNoExHzpryHuPUdqlWM=.\nIf you want to access a device on a public server, please input \"<id>@public\", the key is not needed for public server.\n\nIf you want to force the use of a relay connection on the first connection, add \"/r\" at the end of the ID, for example, \"9123456234/r\"."),
+        ("ip_input_tip", "Enter a direct IP address or domain name. You can optionally add a port, for example:\n192.168.1.142\n192.168.1.142:21118\nmy-host.local:21118\n[fe80::1234]:21118"),
         ("privacy_mode_impl_mag_tip", "Mode 1"),
         ("privacy_mode_impl_virtual_display_tip", "Mode 2"),
         ("idd_not_support_under_win10_2004_tip", "Indirect display driver is not supported. Windows 10, version 2004 or newer is required."),

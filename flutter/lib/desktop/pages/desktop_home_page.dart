@@ -55,6 +55,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  String _localAddressOption = '';
+  String _selectedLocalAddress = '';
+  bool _directServerEnabled = true;
 
   @override
   Widget build(BuildContext context) {
@@ -91,7 +94,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         child: loadLogo(),
       ),
       buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
+      if (!isOutgoingOnly) buildAddressBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
         future: Future.value(
@@ -132,7 +135,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       value: gFFI.serverModel,
       child: Container(
         width: isIncomingOnly ? 280.0 : 200.0,
-        color: Theme.of(context).colorScheme.background,
+        color: Theme.of(context).colorScheme.surface,
         child: Stack(
           children: [
             Column(
@@ -187,14 +190,37 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     );
   }
 
-  buildIDBoard(BuildContext context) {
-    final model = gFFI.serverModel;
+  List<String> _localAddresses() {
+    final seen = <String>{};
+    return _localAddressOption
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .where((address) => seen.add(address))
+        .toList();
+  }
+
+  void _syncSelectedLocalAddress([List<String>? addresses]) {
+    final values = addresses ?? _localAddresses();
+    if (values.isEmpty) {
+      _selectedLocalAddress = '';
+      return;
+    }
+    if (_selectedLocalAddress.isEmpty ||
+        !values.contains(_selectedLocalAddress)) {
+      _selectedLocalAddress = values.first;
+    }
+  }
+
+  buildAddressBoard(BuildContext context) {
+    final addresses = _localAddresses();
+    _syncSelectedLocalAddress(addresses);
+    final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    final displayedAddress = _selectedLocalAddress;
     return Container(
-      margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
+      margin: const EdgeInsets.only(left: 20, right: 11, top: 2),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 2,
@@ -213,7 +239,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          translate("ID"),
+                          translate("Local Address"),
                           style: TextStyle(
                               fontSize: 14,
                               color: Theme.of(context)
@@ -226,26 +252,67 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                       ],
                     ),
                   ),
-                  Flexible(
-                    child: GestureDetector(
-                      onDoubleTap: () {
-                        Clipboard.setData(
-                            ClipboardData(text: model.serverId.text));
-                        showToast(translate("Copied"));
-                      },
-                      child: TextFormField(
-                        controller: model.serverId,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.only(top: 10, bottom: 10),
-                        ),
-                        style: TextStyle(
-                          fontSize: 22,
-                        ),
-                      ).workaroundFreezeLinuxMint(),
+                  GestureDetector(
+                    onDoubleTap: () {
+                      if (displayedAddress.isEmpty) {
+                        return;
+                      }
+                      Clipboard.setData(ClipboardData(text: displayedAddress));
+                      showToast(translate("Copied"));
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              displayedAddress.isEmpty
+                                  ? translate("Not available")
+                                  : displayedAddress,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                          ),
+                          if (addresses.length > 1)
+                            PopupMenuButton<String>(
+                              tooltip: translate('More'),
+                              padding: EdgeInsets.zero,
+                              icon: Icon(
+                                Icons.arrow_drop_down,
+                                size: 20,
+                                color: textColor?.withOpacity(0.5),
+                              ),
+                              onSelected: (value) {
+                                if (value != _selectedLocalAddress) {
+                                  setState(() {
+                                    _selectedLocalAddress = value;
+                                  });
+                                }
+                              },
+                              itemBuilder: (context) => addresses
+                                  .map(
+                                    (address) => PopupMenuItem<String>(
+                                      value: address,
+                                      child: Text(address),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                        ],
+                      ),
                     ),
-                  )
+                  ),
+                  if (!_directServerEnabled)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        translate("Direct IP access is disabled"),
+                        style: TextStyle(
+                            fontSize: 12, color: textColor?.withOpacity(0.5)),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -267,7 +334,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             radius: 15,
             backgroundColor: hover.value
                 ? Theme.of(context).scaffoldBackgroundColor
-                : Theme.of(context).colorScheme.background,
+                : Theme.of(context).colorScheme.surface,
             child: Icon(
               Icons.more_vert_outlined,
               size: 20,
@@ -414,7 +481,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ),
           if (!isOutgoingOnly)
             Text(
-              translate("desk_tip"),
+              translate("desk_tip_ip_only"),
               overflow: TextOverflow.clip,
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -698,7 +765,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   void initState() {
     super.initState();
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
-      await gFFI.serverModel.fetchID();
       final error = await bind.mainGetError();
       if (systemError != error) {
         systemError = error;
@@ -707,6 +773,15 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       final v = await mainGetBoolOption(kOptionStopService);
       if (v != svcStopped.value) {
         svcStopped.value = v;
+        setState(() {});
+      }
+      final localAddressOption = bind.mainGetOptionSync(key: 'local-ip-addr');
+      final directServerEnabled = mainGetBoolOptionSync(kOptionDirectServer);
+      if (_localAddressOption != localAddressOption ||
+          _directServerEnabled != directServerEnabled) {
+        _localAddressOption = localAddressOption;
+        _directServerEnabled = directServerEnabled;
+        _syncSelectedLocalAddress();
         setState(() {});
       }
       if (watchIsCanScreenRecording) {
@@ -767,7 +842,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     bool isChattyMethod(String methodName) {
       switch (methodName) {
-        case kWindowBumpMouse: return true;
+        case kWindowBumpMouse:
+          return true;
       }
 
       return false;
@@ -776,7 +852,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       if (!isChattyMethod(call.method)) {
         debugPrint(
-          "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+            "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
       }
       if (call.method == kWindowMainWindowOnTop) {
         windowOnTop(null);
@@ -811,9 +887,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           connToken: call.arguments['connToken'],
         );
       } else if (call.method == kWindowBumpMouse) {
-        return RdPlatformChannel.instance.bumpMouse(
-          dx: call.arguments['dx'],
-          dy: call.arguments['dy']);
+        return RdPlatformChannel.instance
+            .bumpMouse(dx: call.arguments['dx'], dy: call.arguments['dy']);
       } else if (call.method == kWindowEventMoveTabToNewWindow) {
         final args = call.arguments.split(',');
         int? windowId;

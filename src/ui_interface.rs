@@ -160,9 +160,30 @@ pub fn refresh_options() {
 }
 
 #[inline]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn get_local_ip_addr_option() -> String {
+    let mut ips = Vec::new();
+    for interface in default_net::get_interfaces() {
+        for ipv4 in &interface.ipv4 {
+            let addr = ipv4.addr;
+            if addr.is_loopback() || addr.is_unspecified() || addr.is_link_local() {
+                continue;
+            }
+            ips.push(addr.to_string());
+        }
+    }
+    ips.sort_unstable();
+    ips.dedup();
+    ips.join(",")
+}
+
+#[inline]
 pub fn get_option<T: AsRef<str>>(key: T) -> String {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
+        if key.as_ref() == "local-ip-addr" {
+            return get_local_ip_addr_option();
+        }
         let map = OPTIONS.lock().unwrap();
         if let Some(v) = map.get(key.as_ref()) {
             v.to_owned()

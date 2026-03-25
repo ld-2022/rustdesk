@@ -4,14 +4,16 @@ import 'package:get/get.dart';
 
 import '../../common.dart';
 
-Widget getConnectionPageTitle(BuildContext context, bool isWeb) {
+Widget getConnectionPageTitle(BuildContext context, bool isWeb,
+    {String titleKey = 'Control Remote Desktop', String? tipKey}) {
+  final messageKey = tipKey ?? (isWeb ? "web_id_input_tip" : "id_input_tip");
   return Row(
     children: [
       Expanded(
           child: Row(
         children: [
           AutoSizeText(
-            translate('Control Remote Desktop'),
+            translate(titleKey),
             maxLines: 1,
             style: Theme.of(context)
                 .textTheme
@@ -20,7 +22,7 @@ Widget getConnectionPageTitle(BuildContext context, bool isWeb) {
           ).marginOnly(right: 4),
           Tooltip(
             waitDuration: Duration(milliseconds: 300),
-            message: translate(isWeb ? "web_id_input_tip" : "id_input_tip"),
+            message: translate(messageKey),
             child: Icon(
               Icons.help_outline_outlined,
               size: 16,

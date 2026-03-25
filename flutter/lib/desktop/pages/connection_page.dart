@@ -2,24 +2,91 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/connection_page_title.dart';
+import 'package:flutter_hbb/common/widgets/peers_view.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/popup_menu.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:flutter_hbb/models/peer_model.dart';
 
 import '../../common.dart';
-import '../../common/formatter/id_formatter.dart';
-import '../../common/widgets/peer_tab_page.dart';
-import '../../common/widgets/autocomplete.dart';
 import '../../models/platform_model.dart';
 import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
+
+const _kLocalIpAddrOption = 'local-ip-addr';
+
+String _normalizeDirectAddress(String value) => value.trim();
+
+bool _isValidPort(String? port) {
+  if (port == null) {
+    return true;
+  }
+  final value = int.tryParse(port);
+  return value != null && value > 0 && value <= 65535;
+}
+
+bool _isValidHostname(String host) {
+  final normalized = host.toLowerCase();
+  return RegExp(
+    r'^(localhost|(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*)$',
+  ).hasMatch(normalized);
+}
+
+bool _isDirectAddress(String value) {
+  final input = _normalizeDirectAddress(value);
+  if (input.isEmpty ||
+      input.contains(RegExp(r'\s')) ||
+      input.contains('@') ||
+      input.contains('?') ||
+      input.contains('/') ||
+      input.contains('\\')) {
+    return false;
+  }
+
+  if (int.tryParse(input.replaceAll(' ', '')) != null) {
+    return false;
+  }
+
+  String host = input;
+  String? port;
+  if (input.startsWith('[')) {
+    final match =
+        RegExp(r'^\[([0-9A-Fa-f:.%]+)\](?::(\d{1,5}))?$').firstMatch(input);
+    if (match == null) {
+      return false;
+    }
+    host = match.group(1)!;
+    port = match.group(2);
+  } else {
+    final colonCount = ':'.allMatches(input).length;
+    if (colonCount == 1) {
+      final index = input.lastIndexOf(':');
+      final maybePort = input.substring(index + 1);
+      if (RegExp(r'^\d{1,5}$').hasMatch(maybePort)) {
+        host = input.substring(0, index);
+        port = maybePort;
+      }
+    }
+  }
+
+  if (host.isEmpty || !_isValidPort(port)) {
+    return false;
+  }
+  if (int.tryParse(host) != null) {
+    return false;
+  }
+
+  final parsedIp = InternetAddress.tryParse(host);
+  if (parsedIp != null) {
+    return true;
+  }
+  return _isValidHostname(host);
+}
 
 class OnlineStatusWidget extends StatefulWidget {
   const OnlineStatusWidget({Key? key, this.onSvcStatusChanged})
@@ -34,20 +101,12 @@ class OnlineStatusWidget extends StatefulWidget {
 /// State for the connection page.
 class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   final _svcStopped = Get.find<RxBool>(tag: 'stop-service');
-  final _svcIsUsingPublicServer = true.obs;
+  final _directServerEnabled = true.obs;
+  final _localAddresses = ''.obs;
   Timer? _updateTimer;
 
   double get em => 14.0;
   double? get height => bind.isIncomingOnly() ? null : em * 3;
-
-  void onUsePublicServerGuide() {
-    const url = "https://rustdesk.com/pricing";
-    canLaunchUrlString(url).then((can) {
-      if (can) {
-        launchUrlString(url);
-      }
-    });
-  }
 
   @override
   void initState() {
@@ -66,6 +125,9 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   @override
   Widget build(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
+    final ready = !_svcStopped.value &&
+        _directServerEnabled.value &&
+        _localAddresses.value.isNotEmpty;
     startServiceWidget() => Offstage(
           offstage: !_svcStopped.value,
           child: InkWell(
@@ -78,37 +140,6 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               .marginOnly(left: em),
         );
 
-    setupServerWidget() => Flexible(
-          child: Offstage(
-            offstage: !(!_svcStopped.value &&
-                stateGlobal.svcStatus.value == SvcStatus.ready &&
-                _svcIsUsingPublicServer.value),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(', ', style: TextStyle(fontSize: em)),
-                Flexible(
-                  child: InkWell(
-                    onTap: onUsePublicServerGuide,
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            translate('setup_server_tip'),
-                            style: TextStyle(
-                                decoration: TextDecoration.underline,
-                                fontSize: em),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              ],
-            ),
-          ),
-        );
-
     basicWidget() => Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -117,23 +148,18 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
               width: 8,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(4),
-                color: _svcStopped.value ||
-                        stateGlobal.svcStatus.value == SvcStatus.connecting
+                color: _svcStopped.value
                     ? kColorWarn
-                    : (stateGlobal.svcStatus.value == SvcStatus.ready
-                        ? Color.fromARGB(255, 50, 190, 166)
-                        : Color.fromARGB(255, 224, 79, 95)),
+                    : (ready
+                        ? const Color.fromARGB(255, 50, 190, 166)
+                        : const Color.fromARGB(255, 224, 79, 95)),
               ),
             ).marginSymmetric(horizontal: em),
             Container(
               width: isIncomingOnly ? 226 : null,
               child: _buildConnStatusMsg(),
             ),
-            // stop
             if (!isIncomingOnly) startServiceWidget(),
-            // ready && public
-            // No need to show the guide if is custom client.
-            if (!isIncomingOnly) setupServerWidget(),
           ],
         );
 
@@ -158,11 +184,11 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
     return Text(
       _svcStopped.value
           ? translate("Service is not running")
-          : stateGlobal.svcStatus.value == SvcStatus.connecting
-              ? translate("connecting_status")
-              : stateGlobal.svcStatus.value == SvcStatus.notReady
-                  ? translate("not_ready_status")
-                  : translate('Ready'),
+          : !_directServerEnabled.value
+              ? translate("Direct IP access is disabled")
+              : _localAddresses.value.isEmpty
+                  ? '${translate("Local Address")}: ${translate("Not available")}'
+                  : '${translate("Direct IP Access")}: ${translate("Ready")}',
       style: TextStyle(fontSize: em),
     );
   }
@@ -180,7 +206,8 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
     } else {
       stateGlobal.svcStatus.value = SvcStatus.notReady;
     }
-    _svcIsUsingPublicServer.value = await bind.mainIsUsingPublicServer();
+    _directServerEnabled.value = mainGetBoolOptionSync(kOptionDirectServer);
+    _localAddresses.value = bind.mainGetOptionSync(key: _kLocalIpAddrOption);
     try {
       stateGlobal.videoConnCount.value = status['video_conn_count'] as int;
     } catch (_) {}
@@ -196,60 +223,38 @@ class ConnectionPage extends StatefulWidget {
 }
 
 /// State for the connection page.
-class _ConnectionPageState extends State<ConnectionPage>
-    with SingleTickerProviderStateMixin, WindowListener {
-  /// Controller for the id input bar.
-  final _idController = IDTextEditingController();
-
-  final RxBool _idInputFocused = false.obs;
-  final FocusNode _idFocusNode = FocusNode();
-  final TextEditingController _idEditingController = TextEditingController();
-
-  String selectedConnectionType = 'Connect';
-
+class _ConnectionPageState extends State<ConnectionPage> with WindowListener {
+  final _addressController = TextEditingController();
+  final RxBool _addressInputFocused = false.obs;
+  final FocusNode _addressFocusNode = FocusNode();
   bool isWindowMinimized = false;
-
-  final AllPeersLoader _allPeersLoader = AllPeersLoader();
-
-  // https://github.com/flutter/flutter/issues/157244
-  Iterable<Peer> _autocompleteOpts = [];
 
   final _menuOpen = false.obs;
 
   @override
   void initState() {
     super.initState();
-    _allPeersLoader.init(setState);
-    _idFocusNode.addListener(onFocusChanged);
-    if (_idController.text.isEmpty) {
+    _addressFocusNode.addListener(onFocusChanged);
+    if (_addressController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         final lastRemoteId = await bind.mainGetLastRemoteId();
-        if (lastRemoteId != _idController.id) {
+        if (_isDirectAddress(lastRemoteId) &&
+            lastRemoteId != _addressController.text) {
           setState(() {
-            _idController.id = lastRemoteId;
+            _addressController.text = _normalizeDirectAddress(lastRemoteId);
           });
         }
       });
     }
-    Get.put<TextEditingController>(_idEditingController);
-    Get.put<IDTextEditingController>(_idController);
     windowManager.addListener(this);
   }
 
   @override
   void dispose() {
-    _idController.dispose();
     windowManager.removeListener(this);
-    _allPeersLoader.clear();
-    _idFocusNode.removeListener(onFocusChanged);
-    _idFocusNode.dispose();
-    _idEditingController.dispose();
-    if (Get.isRegistered<IDTextEditingController>()) {
-      Get.delete<IDTextEditingController>();
-    }
-    if (Get.isRegistered<TextEditingController>()) {
-      Get.delete<TextEditingController>();
-    }
+    _addressFocusNode.removeListener(onFocusChanged);
+    _addressFocusNode.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
@@ -288,15 +293,11 @@ class _ConnectionPageState extends State<ConnectionPage>
   }
 
   void onFocusChanged() {
-    _idInputFocused.value = _idFocusNode.hasFocus;
-    if (_idFocusNode.hasFocus) {
-      if (_allPeersLoader.needLoad) {
-        _allPeersLoader.getAllPeers();
-      }
-
-      final textLength = _idEditingController.value.text.length;
+    _addressInputFocused.value = _addressFocusNode.hasFocus;
+    if (_addressFocusNode.hasFocus) {
+      final textLength = _addressController.value.text.length;
       // Select all to facilitate removing text, just following the behavior of address input of chrome.
-      _idEditingController.selection =
+      _addressController.selection =
           TextSelection(baseOffset: 0, extentOffset: textLength);
     }
   }
@@ -306,21 +307,39 @@ class _ConnectionPageState extends State<ConnectionPage>
     final isOutgoingOnly = bind.isOutgoingOnly();
     return Column(
       children: [
-        Expanded(
-            child: Column(
-          children: [
-            Row(
-              children: [
-                Flexible(child: _buildRemoteIDTextField(context)),
-              ],
-            ).marginOnly(top: 22),
-            SizedBox(height: 12),
-            Divider().paddingOnly(right: 12),
-            Expanded(child: PeerTabPage()),
-          ],
-        ).paddingOnly(left: 12.0)),
+        Align(
+          alignment: Alignment.topLeft,
+          child: _buildRemoteAddressTextField(context).marginOnly(top: 22),
+        ).paddingOnly(left: 12.0),
         if (!isOutgoingOnly) const Divider(height: 1),
-        if (!isOutgoingOnly) OnlineStatusWidget()
+        if (!isOutgoingOnly)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: _buildRecentSessions(context),
+            ),
+          )
+        else
+          const Expanded(child: SizedBox.shrink()),
+        if (!isOutgoingOnly) const Divider(height: 1),
+        if (!isOutgoingOnly) OnlineStatusWidget(),
+      ],
+    );
+  }
+
+  Widget _buildRecentSessions(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          translate('Recent sessions'),
+          style: Theme.of(context).textTheme.titleMedium,
+        ).paddingOnly(left: 4),
+        Expanded(
+          child: RecentPeersView(
+            peerFilter: (peer) => _isDirectAddress(peer.id),
+          ).marginOnly(top: 8),
+        ),
       ],
     );
   }
@@ -331,91 +350,43 @@ class _ConnectionPageState extends State<ConnectionPage>
       {bool isFileTransfer = false,
       bool isViewCamera = false,
       bool isTerminal = false}) {
-    var id = _idController.id;
-    connect(context, id,
+    final address = _normalizeDirectAddress(_addressController.text);
+    if (address.isEmpty) {
+      return;
+    }
+    if (!_isDirectAddress(address)) {
+      showToast(translate("Invalid format"));
+      return;
+    }
+    _addressController.text = address;
+    connect(context, address,
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,
         isTerminal: isTerminal);
   }
 
-  /// UI for the remote ID TextField.
-  /// Search for a peer.
-  Widget _buildRemoteIDTextField(BuildContext context) {
+  Widget _buildRemoteAddressTextField(BuildContext context) {
     var w = Container(
       width: 320 + 20 * 2,
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
       decoration: BoxDecoration(
           borderRadius: const BorderRadius.all(Radius.circular(13)),
-          border: Border.all(color: Theme.of(context).colorScheme.background)),
+          border: Border.all(color: Theme.of(context).colorScheme.surface)),
       child: Ink(
         child: Column(
           children: [
-            getConnectionPageTitle(context, false).marginOnly(bottom: 15),
+            getConnectionPageTitle(context, false,
+                    titleKey: 'Direct IP Access', tipKey: 'ip_input_tip')
+                .marginOnly(bottom: 15),
             Row(
               children: [
                 Expanded(
-                    child: RawAutocomplete<Peer>(
-                  optionsBuilder: (TextEditingValue textEditingValue) {
-                    if (textEditingValue.text == '') {
-                      _autocompleteOpts = const Iterable<Peer>.empty();
-                    } else if (_allPeersLoader.peers.isEmpty &&
-                        !_allPeersLoader.isPeersLoaded) {
-                      Peer emptyPeer = Peer(
-                        id: '',
-                        username: '',
-                        hostname: '',
-                        alias: '',
-                        platform: '',
-                        tags: [],
-                        hash: '',
-                        password: '',
-                        forceAlwaysRelay: false,
-                        rdpPort: '',
-                        rdpUsername: '',
-                        loginName: '',
-                        device_group_name: '',
-                        note: '',
-                      );
-                      _autocompleteOpts = [emptyPeer];
-                    } else {
-                      String textWithoutSpaces =
-                          textEditingValue.text.replaceAll(" ", "");
-                      if (int.tryParse(textWithoutSpaces) != null) {
-                        textEditingValue = TextEditingValue(
-                          text: textWithoutSpaces,
-                          selection: textEditingValue.selection,
-                        );
-                      }
-                      String textToFind = textEditingValue.text.toLowerCase();
-                      _autocompleteOpts = _allPeersLoader.peers
-                          .where((peer) =>
-                              peer.id.toLowerCase().contains(textToFind) ||
-                              peer.username
-                                  .toLowerCase()
-                                  .contains(textToFind) ||
-                              peer.hostname
-                                  .toLowerCase()
-                                  .contains(textToFind) ||
-                              peer.alias.toLowerCase().contains(textToFind))
-                          .toList();
-                    }
-                    return _autocompleteOpts;
-                  },
-                  focusNode: _idFocusNode,
-                  textEditingController: _idEditingController,
-                  fieldViewBuilder: (
-                    BuildContext context,
-                    TextEditingController fieldTextEditingController,
-                    FocusNode fieldFocusNode,
-                    VoidCallback onFieldSubmitted,
-                  ) {
-                    updateTextAndPreserveSelection(
-                        fieldTextEditingController, _idController.text);
-                    return Obx(() => TextField(
+                    child: Obx(() => TextField(
                           autocorrect: false,
                           enableSuggestions: false,
-                          keyboardType: TextInputType.visiblePassword,
-                          focusNode: fieldFocusNode,
+                          keyboardType: TextInputType.url,
+                          textInputAction: TextInputAction.go,
+                          focusNode: _addressFocusNode,
                           style: const TextStyle(
                             fontFamily: 'WorkSans',
                             fontSize: 22,
@@ -427,89 +398,16 @@ class _ConnectionPageState extends State<ConnectionPage>
                           decoration: InputDecoration(
                               filled: false,
                               counterText: '',
-                              hintText: _idInputFocused.value
+                              hintText: _addressInputFocused.value
                                   ? null
-                                  : translate('Enter Remote ID'),
+                                  : translate('Enter Remote Address'),
                               contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 15, vertical: 13)),
-                          controller: fieldTextEditingController,
-                          inputFormatters: [IDTextInputFormatter()],
-                          onChanged: (v) {
-                            _idController.id = v;
-                          },
+                          controller: _addressController,
                           onSubmitted: (_) {
                             onConnect();
                           },
-                        ).workaroundFreezeLinuxMint());
-                  },
-                  onSelected: (option) {
-                    setState(() {
-                      _idController.id = option.id;
-                      FocusScope.of(context).unfocus();
-                    });
-                  },
-                  optionsViewBuilder: (BuildContext context,
-                      AutocompleteOnSelected<Peer> onSelected,
-                      Iterable<Peer> options) {
-                    options = _autocompleteOpts;
-                    double maxHeight = options.length * 50;
-                    if (options.length == 1) {
-                      maxHeight = 52;
-                    } else if (options.length == 3) {
-                      maxHeight = 146;
-                    } else if (options.length == 4) {
-                      maxHeight = 193;
-                    }
-                    maxHeight = maxHeight.clamp(0, 200);
-
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Container(
-                          decoration: BoxDecoration(
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 5,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                              borderRadius: BorderRadius.circular(5),
-                              child: Material(
-                                elevation: 4,
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxHeight: maxHeight,
-                                    maxWidth: 319,
-                                  ),
-                                  child: _allPeersLoader.peers.isEmpty &&
-                                          !_allPeersLoader.isPeersLoaded
-                                      ? Container(
-                                          height: 80,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ))
-                                      : Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 5),
-                                          child: ListView(
-                                            children: options
-                                                .map((peer) =>
-                                                    AutocompletePeerTile(
-                                                        onSelect: () =>
-                                                            onSelected(peer),
-                                                        peer: peer))
-                                                .toList(),
-                                          ),
-                                        ),
-                                ),
-                              ))),
-                    );
-                  },
-                )),
+                        ).workaroundFreezeLinuxMint())),
               ],
             ),
             Padding(

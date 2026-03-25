@@ -452,10 +452,14 @@ abstract class BasePeersView extends StatelessWidget {
 
 class RecentPeersView extends BasePeersView {
   RecentPeersView(
-      {Key? key, EdgeInsets? menuPadding, ScrollController? scrollController})
+      {Key? key,
+      EdgeInsets? menuPadding,
+      ScrollController? scrollController,
+      PeerFilter? peerFilter})
       : super(
           key: key,
           peerTabIndex: PeerTabIndex.recent,
+          peerFilter: peerFilter,
           peerCardBuilder: (Peer peer) => RecentPeerCard(
             peer: peer,
             menuPadding: menuPadding,

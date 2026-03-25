@@ -1587,7 +1587,9 @@ bool option2bool(String option, String value) {
 
 String bool2option(String option, bool b) {
   String res;
-  if (option.startsWith('enable-') &&
+  if (option == kOptionDirectServer) {
+    res = b ? 'Y' : 'N';
+  } else if (option.startsWith('enable-') &&
       option != kOptionEnableUdpPunch &&
       option != kOptionEnableIpv6Punch) {
     res = b ? defaultOptionYes : 'N';
